@@ -13,6 +13,9 @@ import {
     Ban as NoColorIcon, 
     FlipHorizontal as FlipHorizontalIcon, 
     FlipVertical as FlipVerticalIcon, 
+    RotateCw as RotateCwIcon,
+    RotateCcw as RotateCcwIcon,
+    Maximize as FitIcon,
     Search as SearchIcon, 
     Upload as UploadIcon, 
     Download as DownloadIcon, 
@@ -33,10 +36,10 @@ import {
     ZoomOut as ZoomOutIcon, 
     ZoomIn as ZoomInIcon, 
     Lock as LockIcon, 
-    Unlock as UnlockIcon,
-    Eye as EyeIcon,
-    Printer as PrinterIcon,
-    FileText as FilePdfIcon
+    Unlock as UnlockIcon, 
+    Eye as EyeIcon, 
+    Printer as PrinterIcon, 
+    FileText as FilePdfIcon 
 } from 'lucide-react';
 
 interface TextStyle {
@@ -62,7 +65,8 @@ interface CustomElement extends TextStyle {
     type: 'text' | 'image' | 'shape';
     x: number;
     y: number;
-    zIndex?: number; // Added zIndex property
+    zIndex?: number;
+    side?: 'front' | 'back';
     
     // --- Text Specific ---
     text?: string;
@@ -70,6 +74,7 @@ interface CustomElement extends TextStyle {
 
     // --- Image Specific ---
     src?: string;
+    originalSrc?: string; // Store the original uploaded image for re-cropping
     width?: number; // width in px
     height?: number; // for shapes
     aspectRatio?: number;
@@ -137,47 +142,347 @@ const FONT_OPTIONS = [
 
 const INITIAL_CUSTOM_ELEMENTS: CustomElement[] = [
     { 
-        id: '1', 
+        id: 'header_dept', 
         type: 'text', 
-        text: 'Department of Post', 
-        bold: false, 
-        italic: false, 
-        fontSize: 10, 
-        color: '#000000', 
-        x: 20, 
-        y: 50,
+        text: 'Department of Posts', 
+        bold: true, 
+        fontSize: 12, 
+        color: '#1f2937', 
+        x: 90, 
+        y: 25,
         fontFamily: '"Inter", sans-serif',
         opacity: 100,
-        textAlign: 'left',
-        zIndex: 30
+        textAlign: 'center',
+        zIndex: 50,
+        side: 'front',
+        caps: 'all',
+        letterSpacing: 0.5
+    },
+    { 
+        id: 'header_country', 
+        type: 'text', 
+        text: 'Sri Lanka', 
+        bold: true, 
+        fontSize: 10, 
+        color: '#4b5563', 
+        x: 135, 
+        y: 42,
+        fontFamily: '"Inter", sans-serif',
+        opacity: 100,
+        textAlign: 'center',
+        zIndex: 50,
+        side: 'front',
+        caps: 'all',
+        letterSpacing: 0.5
+    },
+    // Back Side Elements
+    {
+        id: 'back_sig_line',
+        type: 'shape',
+        shapeType: 'line',
+        x: 40,
+        y: 180,
+        width: 240,
+        height: 2,
+        strokeColor: '#9ca3af', // gray-400
+        strokeWidth: 1,
+        rotation: 0,
+        opacity: 100,
+        zIndex: 35,
+        side: 'back'
+    },
+    {
+        id: 'back_label_sig',
+        type: 'text',
+        text: 'Signature of Card Holder',
+        fontSize: 10,
+        bold: true,
+        caps: 'all',
+        color: '#1f2937', // gray-800
+        textAlign: 'center',
+        x: 85,
+        y: 190,
+        zIndex: 35,
+        side: 'back',
+        fontFamily: '"Inter", sans-serif',
+    },
+    {
+        id: 'signature-element',
+        type: 'image',
+        src: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Signature_sample.svg/1200px-Signature_sample.svg.png",
+        width: 120,
+        x: 100,
+        y: 315, // Adjusted to be clearly above the text
+        zIndex: 40,
+        side: 'back',
+        opacity: 80
+    },
+    {
+        id: 'pm-signature-element',
+        type: 'image',
+        src: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Signature_sample.svg/1200px-Signature_sample.svg.png",
+        width: 100,
+        x: 110,
+        y: 405, // Adjusted to be clearly above Postmaster General text
+        zIndex: 40,
+        side: 'back',
+        opacity: 100
+    },
+    {
+        id: 'back_label_pmg',
+        type: 'text',
+        text: 'Postmaster General',
+        fontSize: 11,
+        bold: true,
+        color: '#111827', // gray-900
+        textAlign: 'center',
+        x: 105,
+        y: 435, // Below PM signature
+        zIndex: 35,
+        side: 'back',
+        fontFamily: '"Inter", sans-serif',
+    },
+    {
+        id: 'back_label_return',
+        type: 'text',
+        text: 'If found, Please return to:\nPostmaster General\nColombo - 01000',
+        fontSize: 9,
+        color: '#6b7280', // gray-500
+        textAlign: 'center',
+        x: 95,
+        y: 460,
+        zIndex: 35,
+        side: 'back',
+        lineHeight: 1.4,
+        fontFamily: '"Inter", sans-serif',
     }
 ];
 
-// --- Missing Components Implementation ---
+// --- Components Implementation ---
 
 const ImageCropper = ({ imageSrc, onCancel, onSave }: { imageSrc: string, onCancel: () => void, onSave: (img: string) => void }) => {
     const [zoom, setZoom] = useState(1);
+    const [rotation, setRotation] = useState(0);
     const [offset, setOffset] = useState({ x: 0, y: 0 });
+    const [isDragging, setIsDragging] = useState(false);
+    const dragStart = useRef({ x: 0, y: 0, startOffsetX: 0, startOffsetY: 0 });
+    const imgRef = useRef<HTMLImageElement>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    // Profile Card Slot Aspect Ratio (112px / 128px approx 0.875)
+    // We use a larger view for cropping: 280px x 320px
+    const VIEW_WIDTH = 280;
+    const VIEW_HEIGHT = 320;
+
+    const handleMouseDown = (e: React.MouseEvent) => {
+        e.preventDefault();
+        setIsDragging(true);
+        dragStart.current = {
+            x: e.clientX,
+            y: e.clientY,
+            startOffsetX: offset.x,
+            startOffsetY: offset.y
+        };
+    };
+
+    const handleMouseMove = (e: React.MouseEvent) => {
+        if (!isDragging) return;
+        const dx = (e.clientX - dragStart.current.x);
+        const dy = (e.clientY - dragStart.current.y);
+        setOffset({
+            x: dragStart.current.startOffsetX + dx,
+            y: dragStart.current.startOffsetY + dy
+        });
+    };
+
+    const handleMouseUp = () => {
+        setIsDragging(false);
+    };
+
+    const rotate = (deg: number) => {
+        setRotation(prev => prev + deg);
+    };
+
+    const reset = () => {
+        setZoom(1);
+        setRotation(0);
+        setOffset({ x: 0, y: 0 });
+    };
+
+    const handleSave = () => {
+        if (!imgRef.current) return;
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        // High resolution output (4x the display size for quality)
+        const OUTPUT_SCALE = 4;
+        canvas.width = 112 * OUTPUT_SCALE;
+        canvas.height = 128 * OUTPUT_SCALE;
+
+        // Fill background white
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Move origin to center of canvas
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        
+        // --- Apply Transformations ---
+        // 1. Move the image by the offset (scaled up to output size)
+        // Note: The offset in UI is relative to the view center.
+        // VIEW_WIDTH is 280. Output width is 448. Factor = 1.6
+        const displayToOutputRatio = canvas.width / VIEW_WIDTH;
+        
+        ctx.translate(offset.x * displayToOutputRatio, offset.y * displayToOutputRatio);
+        
+        // 2. Rotate
+        ctx.rotate(rotation * Math.PI / 180);
+        
+        // 3. Scale
+        // The image in UI is displayed naturally then scaled by CSS.
+        // We need to draw it such that "Zoom 1" fills the canvas width/height similarly to the UI.
+        // In UI, the image is rendered with max-height/max-width 100% of container.
+        
+        // Calculate the scale factor to map natural image size to the canvas size based on 'zoom'
+        // If zoom is 1, and image is landscape, height should match canvas height (cover).
+        const img = imgRef.current;
+        const imgAspect = img.naturalWidth / img.naturalHeight;
+        const canvasAspect = canvas.width / canvas.height;
+        
+        let drawWidth, drawHeight;
+        
+        // Logic to emulate "object-fit: cover" base size
+        if (imgAspect > canvasAspect) {
+             // Image is wider than canvas -> Match height
+             drawHeight = canvas.height;
+             drawWidth = drawHeight * imgAspect;
+        } else {
+             // Image is taller -> Match width
+             drawWidth = canvas.width;
+             drawHeight = drawWidth / imgAspect;
+        }
+
+        ctx.scale(zoom, zoom);
+        
+        // Draw centered
+        ctx.drawImage(img, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
+
+        onSave(canvas.toDataURL('image/jpeg', 0.95));
+    };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
-            <div className="bg-white p-4 rounded-lg max-w-lg w-full">
-                <h3 className="text-lg font-bold mb-4">Crop Image</h3>
-                <div className="h-64 bg-gray-100 flex items-center justify-center overflow-hidden relative border rounded">
-                     <img 
-                        src={imageSrc} 
-                        style={{ transform: `scale(${zoom}) translate(${offset.x}px, ${offset.y}px)`, transition: 'transform 0.1s' }} 
-                        className="max-h-full max-w-full" 
-                        alt="Crop Preview"
-                     />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90" onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
+            <div className="bg-white rounded-xl max-w-lg w-full overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+                <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                    <h3 className="text-sm font-bold text-gray-800 uppercase tracking-wide">Adjust Profile Photo</h3>
+                    <button onClick={onCancel}><CloseIcon className="text-gray-500 hover:text-red-500" /></button>
                 </div>
-                <div className="mt-4 space-y-2">
-                    <div className="flex justify-between text-sm"><span>Zoom</span><span>{Math.round(zoom * 100)}%</span></div>
-                    <input type="range" min="0.5" max="3" step="0.1" value={zoom} onChange={(e) => setZoom(parseFloat(e.target.value))} className="w-full" />
+                
+                <div className="flex-1 bg-gray-900 relative overflow-hidden flex items-center justify-center p-8 select-none" style={{ minHeight: '400px' }}>
+                    {/* Image Container */}
+                    <div 
+                        ref={containerRef}
+                        className="relative cursor-move"
+                        onMouseDown={handleMouseDown}
+                        onMouseMove={handleMouseMove}
+                        style={{
+                            width: `${VIEW_WIDTH}px`,
+                            height: `${VIEW_HEIGHT}px`,
+                        }}
+                    >
+                        {/* The Image */}
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                             <img 
+                                ref={imgRef}
+                                src={imageSrc} 
+                                style={{ 
+                                    transform: `translate(${offset.x}px, ${offset.y}px) rotate(${rotation}deg) scale(${zoom})`, 
+                                    transition: isDragging ? 'none' : 'transform 0.1s ease-out',
+                                    maxWidth: 'none',
+                                    maxHeight: 'none',
+                                    // Base sizing to ensure it covers area at zoom 1 roughly
+                                    height: (imgRef.current?.naturalWidth || 0) / (imgRef.current?.naturalHeight || 1) > (VIEW_WIDTH/VIEW_HEIGHT) ? '100%' : 'auto',
+                                    width: (imgRef.current?.naturalWidth || 0) / (imgRef.current?.naturalHeight || 1) > (VIEW_WIDTH/VIEW_HEIGHT) ? 'auto' : '100%'
+                                }} 
+                                className="pointer-events-none select-none" 
+                                alt="Crop Preview"
+                                onLoad={(e) => {
+                                    // Initial fit logic could go here
+                                    const img = e.currentTarget;
+                                    const aspect = img.naturalWidth / img.naturalHeight;
+                                    const viewAspect = VIEW_WIDTH / VIEW_HEIGHT;
+                                    if(aspect > viewAspect) {
+                                        img.style.height = '100%';
+                                        img.style.width = 'auto';
+                                    } else {
+                                        img.style.width = '100%';
+                                        img.style.height = 'auto';
+                                    }
+                                }}
+                             />
+                        </div>
+                        
+                        {/* Overlay Mask - Darkens outside, transparent inside */}
+                        <div className="absolute inset-0 pointer-events-none" 
+                             style={{
+                                 boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.75)',
+                                 borderRadius: '4px', // Slight rounding like ID
+                                 border: '2px solid rgba(255, 255, 255, 0.8)'
+                             }}>
+                        </div>
+                        
+                        {/* Grid Lines (9-box) */}
+                        <div className="absolute inset-0 pointer-events-none">
+                            <div className="absolute top-1/3 left-0 right-0 h-px bg-white/70 shadow-sm"></div>
+                            <div className="absolute top-2/3 left-0 right-0 h-px bg-white/70 shadow-sm"></div>
+                            <div className="absolute left-1/3 top-0 bottom-0 w-px bg-white/70 shadow-sm"></div>
+                            <div className="absolute left-2/3 top-0 bottom-0 w-px bg-white/70 shadow-sm"></div>
+                        </div>
+                    </div>
                 </div>
-                <div className="mt-6 flex justify-between">
-                     <button onClick={onCancel} className="px-4 py-2 border rounded text-gray-700 hover:bg-gray-50">Cancel</button>
-                     <button onClick={() => onSave(imageSrc)} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Save</button>
+
+                <div className="p-5 bg-white space-y-5">
+                    {/* Controls */}
+                    <div className="flex items-center gap-4">
+                        <span className="text-xs font-bold text-gray-500 w-12">Zoom</span>
+                        <ZoomOutIcon className="w-4 h-4 text-gray-400" />
+                        <input 
+                            type="range" 
+                            min="0.5" 
+                            max="3" 
+                            step="0.05" 
+                            value={zoom} 
+                            onChange={(e) => setZoom(parseFloat(e.target.value))} 
+                            className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600" 
+                        />
+                        <ZoomInIcon className="w-4 h-4 text-gray-400" />
+                        <span className="text-xs font-mono text-gray-600 w-8 text-right">{Math.round(zoom * 100)}%</span>
+                    </div>
+
+                    <div className="flex items-center gap-4">
+                        <span className="text-xs font-bold text-gray-500 w-12">Rotate</span>
+                        <div className="flex-1 flex items-center gap-2">
+                            <button onClick={() => rotate(-90)} className="p-1.5 border rounded hover:bg-gray-50 text-gray-600" title="-90°"><RotateCcwIcon className="w-4 h-4" /></button>
+                            <input 
+                                type="range" 
+                                min="-45" 
+                                max="45" 
+                                value={rotation % 360} 
+                                onChange={(e) => setRotation(parseInt(e.target.value))} 
+                                className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600" 
+                            />
+                            <button onClick={() => rotate(90)} className="p-1.5 border rounded hover:bg-gray-50 text-gray-600" title="+90°"><RotateCwIcon className="w-4 h-4" /></button>
+                        </div>
+                        <span className="text-xs font-mono text-gray-600 w-8 text-right">{rotation}°</span>
+                    </div>
+
+                    <div className="flex justify-between items-center pt-2 border-t border-gray-100">
+                         <button onClick={reset} className="text-xs text-red-500 hover:text-red-700 font-medium flex items-center gap-1"><FitIcon className="w-3 h-3" /> Reset</button>
+                         <div className="flex gap-3">
+                             <button onClick={onCancel} className="px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
+                             <button onClick={handleSave} className="px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 shadow-sm flex items-center gap-2"><CropIcon className="w-4 h-4" /> Crop & Save</button>
+                         </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -392,6 +697,7 @@ const getComputedTextStyle = (style: TextStyle): React.CSSProperties => {
         letterSpacing: style.letterSpacing ? `${style.letterSpacing}px` : undefined,
         lineHeight: style.lineHeight,
         WebkitTextStroke: style.strokeWidth ? `${style.strokeWidth}px ${style.strokeColor}` : undefined,
+        whiteSpace: 'pre-wrap', // Enable multiline support
     };
 };
 
@@ -412,6 +718,16 @@ const App = () => {
   const [images, setImages] = useState({
     profile: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?ixlib=rb-1.2.1&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80",
     signature: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Signature_sample.svg/1200px-Signature_sample.svg.png",
+    pmSignature: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Signature_sample.svg/1200px-Signature_sample.svg.png",
+    frontBg: "https://img.freepik.com/free-vector/abstract-blue-geometric-shapes-background_1035-17545.jpg?w=1380&t=st=1706000000~exp=1706000600~hmac=xyz", 
+    backBg: ""
+  });
+  
+  // Store original images to allow non-destructive cropping
+  const [originalImages, setOriginalImages] = useState({
+    profile: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?ixlib=rb-1.2.1&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80",
+    signature: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Signature_sample.svg/1200px-Signature_sample.svg.png",
+    pmSignature: "https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Signature_sample.svg/1200px-Signature_sample.svg.png",
     frontBg: "https://img.freepik.com/free-vector/abstract-blue-geometric-shapes-background_1035-17545.jpg?w=1380&t=st=1706000000~exp=1706000600~hmac=xyz", 
     backBg: ""
   });
@@ -469,7 +785,7 @@ const App = () => {
   const [previewMode, setPreviewMode] = useState<'front' | 'back' | 'both'>('both');
   
   // Custom Elements State
-  const [activeTab, setActiveTab] = useState<'frontImages'|'frontText'|'frontShapes'|'backImages'|'backText'>('frontText');
+  const [activeTab, setActiveTab] = useState<'frontImages'|'frontText'|'frontShapes'|'backImages'|'backText'|'backShapes'>('frontText');
   const [customElements, setCustomElements] = useState<CustomElement[]>(INITIAL_CUSTOM_ELEMENTS);
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   
@@ -524,7 +840,7 @@ const App = () => {
         }
   }, [editingElementId]);
 
-  // Handlers ... (Inputs, Uploads, Crop, Generate logic same as before)
+  // Handlers
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setData(prev => ({ ...prev, [name]: value }));
@@ -536,9 +852,50 @@ const App = () => {
       reader.onload = (ev) => {
         const result = ev.target?.result as string;
         if (key === 'profile') {
+           setOriginalImages(prev => ({ ...prev, profile: result }));
            setTempCropImage(result);
            setActiveCropId('profile');
            setIsCropperOpen(true);
+        } else if (key === 'signature') {
+           setImages(prev => ({ ...prev, signature: result }));
+           setCustomElements(prev => {
+                const exists = prev.find(el => el.id === 'signature-element');
+                if (exists) {
+                    return prev.map(el => el.id === 'signature-element' ? { ...el, src: result } : el);
+                } else {
+                    return [...prev, {
+                        id: 'signature-element',
+                        type: 'image',
+                        src: result,
+                        width: 120,
+                        x: 100,
+                        y: 350,
+                        zIndex: 40,
+                        side: 'back',
+                        opacity: 80
+                    }];
+                }
+           });
+        } else if (key === 'pmSignature') {
+           setImages(prev => ({ ...prev, pmSignature: result }));
+           setCustomElements(prev => {
+                const exists = prev.find(el => el.id === 'pm-signature-element');
+                if (exists) {
+                    return prev.map(el => el.id === 'pm-signature-element' ? { ...el, src: result } : el);
+                } else {
+                    return [...prev, {
+                        id: 'pm-signature-element',
+                        type: 'image',
+                        src: result,
+                        width: 100,
+                        x: 110,
+                        y: 425,
+                        zIndex: 40,
+                        side: 'back',
+                        opacity: 100
+                    }];
+                }
+           });
         } else {
            setImages(prev => ({ ...prev, [key]: result }));
         }
@@ -548,7 +905,12 @@ const App = () => {
   };
   
   const handleOpenCropper = () => {
-      if (images.profile) {
+      // Prefer original image for non-destructive cropping
+      if (originalImages.profile) {
+          setTempCropImage(originalImages.profile);
+          setActiveCropId('profile');
+          setIsCropperOpen(true);
+      } else if (images.profile) {
           setTempCropImage(images.profile);
           setActiveCropId('profile');
           setIsCropperOpen(true);
@@ -582,14 +944,23 @@ const App = () => {
   };
   
   const handleResetPositions = () => {
-      if (window.confirm("Are you sure you want to reset all custom elements to their default state?")) {
-          setCustomElements(INITIAL_CUSTOM_ELEMENTS);
+      if (window.confirm("Are you sure you want to reset all custom elements to their default positions? (Images will be preserved)")) {
+          const resetElements = INITIAL_CUSTOM_ELEMENTS.map(el => {
+              // Preserve current image src for signature elements if they exist in state
+              if (el.id === 'signature-element' && images.signature) {
+                  return { ...el, src: images.signature };
+              }
+              if (el.id === 'pm-signature-element' && images.pmSignature) {
+                  return { ...el, src: images.pmSignature };
+              }
+              return el;
+          });
+          setCustomElements(resetElements);
           setSelectedElementId(null);
       }
   };
 
-  // ... (Custom Elements Handlers: addCustomText, addCustomImage, addCustomShape, update, delete)
-  const addCustomText = () => {
+  const addCustomText = (side: 'front' | 'back' = 'front') => {
       const newEl: CustomElement = { 
           id: Date.now().toString(), 
           type: 'text', 
@@ -605,18 +976,18 @@ const App = () => {
           textAlign: 'left',
           lineHeight: 1.2,
           letterSpacing: 0,
-          zIndex: 30
+          zIndex: 30,
+          side: side
       };
       setCustomElements([...customElements, newEl]);
       setSelectedElementId(newEl.id);
   };
 
-  const addCustomImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const addCustomImage = (side: 'front' | 'back') => (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
         const reader = new FileReader();
         reader.onload = (ev) => {
             const result = ev.target?.result as string;
-            // Get image dimensions to maintain aspect ratio
             const img = new Image();
             img.onload = () => {
                 const aspectRatio = img.width / img.height;
@@ -624,7 +995,8 @@ const App = () => {
                     id: Date.now().toString(),
                     type: 'image',
                     src: result,
-                    width: 100, // Default width
+                    originalSrc: result, // Store original source
+                    width: 100,
                     aspectRatio: aspectRatio,
                     x: 20,
                     y: 20,
@@ -632,7 +1004,8 @@ const App = () => {
                     rotation: 0,
                     flipX: false,
                     flipY: false,
-                    zIndex: 30
+                    zIndex: 30,
+                    side: side
                 };
                 setCustomElements(prev => [...prev, newEl]);
                 setSelectedElementId(newEl.id);
@@ -643,13 +1016,13 @@ const App = () => {
     }
   };
 
-  const addCustomShape = (type: 'rectangle' | 'circle' | 'star' | 'line') => {
+  const addCustomShape = (type: 'rectangle' | 'circle' | 'star' | 'line', side: 'front' | 'back' = 'front') => {
       const newEl: CustomElement = {
           id: Date.now().toString(),
           type: 'shape',
           shapeType: type,
           width: 50,
-          height: type === 'line' ? 2 : 50, // Line defaults to small height
+          height: type === 'line' ? 2 : 50,
           x: 50,
           y: 50,
           fillColor: type === 'line' ? 'transparent' : '#3b82f6',
@@ -659,7 +1032,8 @@ const App = () => {
           rotation: 0,
           flipX: false,
           flipY: false,
-          zIndex: 30
+          zIndex: 30,
+          side: side
       };
       setCustomElements([...customElements, newEl]);
       setSelectedElementId(newEl.id);
@@ -704,7 +1078,6 @@ const App = () => {
   // Drag and Drop Logic
   const handleElementMouseDown = (e: React.MouseEvent, id: string) => {
     e.stopPropagation(); 
-    
     if (isLocked) return;
     if (editingElementId === id) return;
 
@@ -743,7 +1116,6 @@ const App = () => {
     };
   };
 
-  // Inspector Drag Handlers
   const handleInspectorDragStart = (e: React.MouseEvent) => {
       setIsDraggingInspector(true);
       let currentX = inspectorPosition?.x;
@@ -762,7 +1134,6 @@ const App = () => {
       };
   };
 
-  // Global mouse handlers for drag/resize
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
         if (draggingId) {
@@ -784,34 +1155,18 @@ const App = () => {
              const { elX, elY, startW, startH } = dragStartRef.current;
              const rad = toRad(el.rotation || 0);
 
-             // Global Mouse Delta
              const globalDx = (e.clientX - dragStartRef.current.x) / scale;
              const globalDy = (e.clientY - dragStartRef.current.y) / scale;
 
-             // Rotate delta to align with element local axes
              const localDelta = rotate(globalDx, globalDy, -rad);
              
-             let dW = 0;
-             let dH = 0;
-             let fixedX = 0; // Relative to center (0,0)
-             let fixedY = 0;
+             let dW = 0, dH = 0, fixedX = 0, fixedY = 0;
 
-             // Determine resize direction and fixed point
-             if (resizingHandle.includes('e')) {
-                 dW = localDelta.x;
-                 fixedX = -startW / 2;
-             } else if (resizingHandle.includes('w')) {
-                 dW = -localDelta.x;
-                 fixedX = startW / 2;
-             }
+             if (resizingHandle.includes('e')) { dW = localDelta.x; fixedX = -startW / 2; } 
+             else if (resizingHandle.includes('w')) { dW = -localDelta.x; fixedX = startW / 2; }
 
-             if (resizingHandle.includes('s')) {
-                 dH = localDelta.y;
-                 fixedY = -startH / 2;
-             } else if (resizingHandle.includes('n')) {
-                 dH = -localDelta.y;
-                 fixedY = startH / 2;
-             }
+             if (resizingHandle.includes('s')) { dH = localDelta.y; fixedY = -startH / 2; } 
+             else if (resizingHandle.includes('n')) { dH = -localDelta.y; fixedY = startH / 2; }
 
              const newW = Math.max(10, startW + dW);
              const newH = Math.max(10, startH + dH);
@@ -819,48 +1174,33 @@ const App = () => {
              const oldCenterX = elX + startW/2;
              const oldCenterY = elY + startH/2;
              
-             // Fixed Point Global
              const fixedGlobal = {
                  x: oldCenterX + (fixedX * Math.cos(rad) - fixedY * Math.sin(rad)),
                  y: oldCenterY + (fixedX * Math.sin(rad) + fixedY * Math.cos(rad))
              };
 
-             // 2. Calculate where the fixed point is relative to the NEW center
-             // Handle map determines which corner is fixed based on handle
              const handleMap: any = {
-                'se': { fx: -1, fy: -1 }, // Fixed is NW
-                'sw': { fx: 1, fy: -1 },  // Fixed is NE
-                'ne': { fx: -1, fy: 1 },  // Fixed is SW
-                'nw': { fx: 1, fy: 1 },   // Fixed is SE
-                'n':  { fx: 0, fy: 1 },
-                's':  { fx: 0, fy: -1 },
-                'e':  { fx: -1, fy: 0 },
-                'w':  { fx: 1, fy: 0 }
+                'se': { fx: -1, fy: -1 }, 'sw': { fx: 1, fy: -1 },
+                'ne': { fx: -1, fy: 1 },  'nw': { fx: 1, fy: 1 },
+                'n':  { fx: 0, fy: 1 },   's':  { fx: 0, fy: -1 },
+                'e':  { fx: -1, fy: 0 },  'w':  { fx: 1, fy: 0 }
              };
              
              const signs = handleMap[resizingHandle];
              const newFixedLocalX = (signs.fx || 0) * newW / 2;
              const newFixedLocalY = (signs.fy || 0) * newH / 2;
 
-             // Rotated offset of fixed point from new center
              const rotatedNewFixedOffset = {
                  x: newFixedLocalX * Math.cos(rad) - newFixedLocalY * Math.sin(rad),
                  y: newFixedLocalX * Math.sin(rad) + newFixedLocalY * Math.cos(rad)
              };
 
-             // New Center = FixedGlobal - RotatedOffset
              const newCenterX = fixedGlobal.x - rotatedNewFixedOffset.x;
              const newCenterY = fixedGlobal.y - rotatedNewFixedOffset.y;
 
              setCustomElements(prev => prev.map(item => {
                  if (item.id === resizingId) {
-                     return { 
-                         ...item, 
-                         width: newW, 
-                         height: newH,
-                         x: newCenterX - newW/2,
-                         y: newCenterY - newH/2
-                     };
+                     return { ...item, width: newW, height: newH, x: newCenterX - newW/2, y: newCenterY - newH/2 };
                  }
                  return item;
              }));
@@ -893,8 +1233,6 @@ const App = () => {
     };
   }, [draggingId, resizingId, resizingHandle, zoom, isDraggingInspector]);
 
-
-  // AI Functionality ... (autoFillData same)
   const autoFillData = async () => {
     setLoadingAi(true);
     try {
@@ -929,7 +1267,6 @@ const App = () => {
     }
   };
 
-  // Helper render to avoid duplicates in sidebar inspector
   const renderInspector = () => {
       if (!selectedStyle) return null;
       
@@ -948,7 +1285,6 @@ const App = () => {
                 <button onClick={() => setSelectedElementId(null)} className="text-xs text-blue-600 hover:underline">Close</button>
             </div>
             
-            {/* Arrange Controls (Layering) */}
             {!isStandardSelection && (
                 <div className="flex justify-between gap-2 border-b border-gray-100 pb-2">
                     <button onClick={() => moveElementLayer('backward')} className="flex-1 py-1.5 bg-gray-50 border border-gray-200 rounded text-[10px] text-gray-600 hover:bg-gray-100 flex justify-center items-center gap-1" title="Send Backward">
@@ -960,7 +1296,6 @@ const App = () => {
                 </div>
             )}
 
-            {/* Text Content */}
             {!isStandardSelection && (selectedStyle as CustomElement).type === 'text' && (
                 <textarea
                     value={(selectedStyle as CustomElement).text}
@@ -970,16 +1305,15 @@ const App = () => {
                 />
             )}
             
-            {/* Image / Shape Common Advanced Options */}
             {!isStandardSelection && ((selectedStyle as CustomElement).type === 'image' || (selectedStyle as CustomElement).type === 'shape') && (
                 <div className="space-y-4">
                      <h4 className="text-[10px] font-bold text-gray-800 uppercase bg-gray-100 p-1 rounded">Visual Style</h4>
                      
-                    {/* Crop (Image Only) */}
                     {(selectedStyle as CustomElement).type === 'image' && (
                         <button 
                             onClick={() => {
-                                setTempCropImage((selectedStyle as CustomElement).src || '');
+                                // Use originalSrc if available to avoid cropping already cropped image
+                                setTempCropImage((selectedStyle as CustomElement).originalSrc || (selectedStyle as CustomElement).src || '');
                                 setActiveCropId((selectedStyle as CustomElement).id);
                                 setIsCropperOpen(true);
                             }}
@@ -989,7 +1323,6 @@ const App = () => {
                         </button>
                     )}
 
-                    {/* Shape Specific: Fill & Outline */}
                     {(selectedStyle as CustomElement).type === 'shape' && (
                         <div className="space-y-3">
                             <div className="flex justify-between items-center">
@@ -1058,10 +1391,7 @@ const App = () => {
                         </div>
                     )}
 
-                    {/* Transform Controls */}
                     <div className="space-y-3 pt-1 border-t border-gray-100">
-                        
-                        {/* Opacity */}
                         <div>
                             <div className="flex justify-between text-[10px] text-gray-500 mb-1">
                                 <span>Opacity</span>
@@ -1077,7 +1407,6 @@ const App = () => {
                             />
                         </div>
 
-                        {/* Rotation */}
                         <div>
                             <div className="flex justify-between text-[10px] text-gray-500 mb-1">
                                 <span>Rotation</span>
@@ -1093,7 +1422,6 @@ const App = () => {
                             />
                         </div>
 
-                        {/* Flip */}
                         <div className="flex justify-between gap-2">
                             <button 
                                 onClick={() => updateCustomElement((selectedStyle as CustomElement).id, { flipX: !(selectedStyle as CustomElement).flipX })}
@@ -1110,7 +1438,6 @@ const App = () => {
                         </div>
                     </div>
 
-                    {/* Dimensions */}
                     <div className="border-t border-gray-100 pt-3">
                         <div className="flex justify-between items-center mb-1">
                             <label className="text-[10px] font-bold text-gray-500 uppercase">Zoom / Size (Width)</label>
@@ -1132,10 +1459,8 @@ const App = () => {
                 </div>
             )}
 
-            {/* ... (Style Controls for Text same as before) */}
             {(isStandardSelection || (selectedStyle as CustomElement).type === 'text') && (
                 <>
-                {/* ... (Font, Size, Toggles, Caps, Alignment, Color, Spacing blocks) */}
                 <div className="grid grid-cols-2 gap-2">
                     <div>
                         <label className="block text-[10px] font-medium text-gray-500 mb-1">Font</label>
@@ -1261,8 +1586,6 @@ const App = () => {
   return (
     <div className="min-h-screen flex flex-col font-sans text-slate-800">
       
-      {/* ... (Modals, Header, Toolbar, Left Column same) */}
-      
       {isCropperOpen && tempCropImage && (
           <ImageCropper 
             imageSrc={tempCropImage} 
@@ -1299,7 +1622,6 @@ const App = () => {
         setConfig={setProfileConfig}
       />
 
-      {/* Header */}
       <header className="bg-[#1e88e5] text-white p-4 shadow-md flex items-center justify-between z-20 sticky top-0">
         <div className="flex items-center gap-3">
             <div className="bg-white/20 p-2 rounded-lg">
@@ -1315,7 +1637,6 @@ const App = () => {
         </div>
       </header>
 
-      {/* Toolbar */}
       <div className="bg-white border-b border-gray-200 p-3 flex flex-wrap gap-3 items-center sticky top-[72px] z-10 shadow-sm">
         <button className="flex items-center gap-2 px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50 bg-white">
             <SearchIcon /> Search by NIC
@@ -1345,7 +1666,6 @@ const App = () => {
       </div>
 
       <div className="flex-1 p-6 grid grid-cols-12 gap-6 overflow-y-auto content-start">
-        {/* Left Column code same ... */}
         <div className="col-span-12 lg:col-span-7 space-y-6">
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                 <h2 className="text-base font-bold text-gray-800 mb-4">Background Images</h2>
@@ -1385,7 +1705,6 @@ const App = () => {
             </div>
 
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                {/* ID Card Details (Same as before) */}
                 <div className="flex justify-between items-center mb-6">
                     <h2 className="text-base font-bold text-gray-800">ID Card Details</h2>
                     <div className="flex gap-2">
@@ -1395,7 +1714,6 @@ const App = () => {
                     </div>
                 </div>
                 <div className="space-y-6">
-                    {/* ... (ID Card Inputs same) */}
                     <div>
                         <label className="block text-xs font-semibold text-gray-700 mb-2">Profile Photo</label>
                         <div className="flex gap-6 items-center">
@@ -1412,7 +1730,6 @@ const App = () => {
                             </div>
                         </div>
                     </div>
-                    {/* ... Inputs */}
                     <div className="grid grid-cols-2 gap-6">
                         <div><label className="block text-xs font-medium text-gray-700 mb-1">Name with Initials</label><input type="text" name="nameWithInitials" value={data.nameWithInitials} onChange={handleInputChange} className="w-full px-3 py-2 bg-blue-50/30 border border-blue-100 rounded text-sm text-gray-800 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition-all" /></div>
                         <div><label className="block text-xs font-medium text-gray-700 mb-1">Full Name</label><input type="text" name="fullName" value={data.fullName} onChange={handleInputChange} className="w-full px-3 py-2 bg-blue-50/30 border border-blue-100 rounded text-sm text-gray-800 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition-all" /></div>
@@ -1424,7 +1741,6 @@ const App = () => {
                         </div>
                         <div className="col-span-2"><label className="block text-xs font-medium text-gray-700 mb-1">SL Post File No</label><input type="text" name="slPostFileNo" value={data.slPostFileNo} onChange={handleInputChange} className="w-full px-3 py-2 bg-blue-50/30 border border-blue-100 rounded text-sm text-gray-800 focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition-all" /></div>
                     </div>
-                    {/* Signature */}
                     <div>
                         <label className="block text-xs font-medium text-gray-700 mb-2">Signature (for back side)</label>
                         <div className="flex gap-4 items-center">
@@ -1432,53 +1748,71 @@ const App = () => {
                              <label className="px-4 py-2 border border-gray-300 rounded text-xs font-medium hover:bg-gray-50 cursor-pointer flex items-center gap-2"><UploadIcon /> Browse & Upload<input type="file" className="hidden" onChange={handleImageUpload('signature')} /></label>
                         </div>
                     </div>
+                    <div>
+                        <label className="block text-xs font-medium text-gray-700 mb-2">Postmaster General Signature (back)</label>
+                        <div className="flex gap-4 items-center">
+                             <div className="w-24 h-12 bg-gray-50 border border-dashed border-gray-300 rounded flex items-center justify-center overflow-hidden">{images.pmSignature ? <img src={images.pmSignature} className="max-w-full max-h-full" /> : <span className="text-xs text-gray-400">No Sig</span>}</div>
+                             <label className="px-4 py-2 border border-gray-300 rounded text-xs font-medium hover:bg-gray-50 cursor-pointer flex items-center gap-2"><UploadIcon /> Browse & Upload<input type="file" className="hidden" onChange={handleImageUpload('pmSignature')} /></label>
+                        </div>
+                    </div>
                     <div className="pt-4"><button onClick={handleGenerateCard} className="bg-[#1e88e5] hover:bg-blue-600 text-white px-6 py-2 rounded text-sm font-medium shadow-sm transition-colors">Generate ID Card</button></div>
                 </div>
             </div>
 
-            {/* Custom Elements Section */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                 <h2 className="text-base font-bold text-gray-800 mb-4">Custom Elements</h2>
-                {/* Tabs, Grid, List code same as before... */}
                 <div className="flex border-b border-gray-200 mb-4 overflow-x-auto">
-                    {['Front Images', 'Front Text', 'Front Shapes', 'Back Images', 'Back Text'].map((tab) => {
+                    {['Front Images', 'Front Text', 'Front Shapes', 'Back Images', 'Back Text', 'Back Shapes'].map((tab) => {
                          const key = tab.replace(/\s+/g, '').replace(/^(.)/, (c) => c.toLowerCase()) as typeof activeTab;
                          return (<button key={tab} onClick={() => {setActiveTab(key);setSelectedElementId(null);}} className={`px-4 py-2 text-xs font-medium border-b-2 transition-colors whitespace-nowrap ${activeTab === key ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>{tab}</button>);
                     })}
                 </div>
                 <div className="min-h-[250px]">
-                    {/* ... (Render Tabs Content: same as before) */}
                     {activeTab === 'frontText' && (
                         <div>
-                            <div className="flex justify-between items-center mb-4"><span className="text-xs font-medium text-gray-600">Front Side - Text Elements</span><button onClick={addCustomText} className="text-xs flex items-center gap-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded text-gray-700 font-medium transition-colors"><PlusIcon /> Add Text</button></div>
-                            <div className="space-y-3">{customElements.filter(el => el.type === 'text').map((item) => (<div key={item.id} className={`flex items-center gap-2 p-2 rounded border transition-colors cursor-pointer ${selectedElementId === item.id ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-100' : 'bg-gray-50 border-gray-100 hover:bg-gray-100'}`} onClick={() => setSelectedElementId(item.id)}><div className="w-6 flex items-center justify-center text-gray-400"><TextIcon /></div><div className="flex-1 overflow-hidden"><div className="text-xs font-medium truncate text-gray-700">{item.text || "Empty Text"}</div><div className="text-[10px] text-gray-400 truncate">{item.fontSize}px • {item.fontFamily?.split(',')[0].replace(/"/g, '')}</div></div><button onClick={(e) => { e.stopPropagation(); deleteCustomElement(item.id); }} className="w-6 h-6 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 rounded"><TrashIcon /></button></div>))}{customElements.filter(el => el.type === 'text').length === 0 && (<div className="text-center py-8 border-2 border-dashed border-gray-100 rounded-lg"><p className="text-xs text-gray-400">No custom text added yet.</p></div>)}</div>
+                            <div className="flex justify-between items-center mb-4"><span className="text-xs font-medium text-gray-600">Front Side - Text Elements</span><button onClick={() => addCustomText('front')} className="text-xs flex items-center gap-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded text-gray-700 font-medium transition-colors"><PlusIcon /> Add Text</button></div>
+                            <div className="space-y-3">{customElements.filter(el => (el.type === 'text' && (el.side === 'front' || !el.side))).map((item) => (<div key={item.id} className={`flex items-center gap-2 p-2 rounded border transition-colors cursor-pointer ${selectedElementId === item.id ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-100' : 'bg-gray-50 border-gray-100 hover:bg-gray-100'}`} onClick={() => setSelectedElementId(item.id)}><div className="w-6 flex items-center justify-center text-gray-400"><TextIcon /></div><div className="flex-1 overflow-hidden"><div className="text-xs font-medium truncate text-gray-700">{item.text || "Empty Text"}</div><div className="text-[10px] text-gray-400 truncate">{item.fontSize}px • {item.fontFamily?.split(',')[0].replace(/"/g, '')}</div></div><button onClick={(e) => { e.stopPropagation(); deleteCustomElement(item.id); }} className="w-6 h-6 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 rounded"><TrashIcon /></button></div>))}{customElements.filter(el => (el.type === 'text' && (el.side === 'front' || !el.side))).length === 0 && (<div className="text-center py-8 border-2 border-dashed border-gray-100 rounded-lg"><p className="text-xs text-gray-400">No custom text added yet.</p></div>)}</div>
                         </div>
                     )}
                     {activeTab === 'frontImages' && (
                         <div>
-                            <div className="flex justify-between items-center mb-4"><span className="text-xs font-medium text-gray-600">Front Side - Images & Icons</span><label className="text-xs flex items-center gap-2 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded font-medium transition-colors cursor-pointer shadow-sm"><UploadIcon /> Upload Image<input type="file" className="hidden" accept="image/*" onChange={addCustomImage} /></label></div>
-                            <div className="grid grid-cols-2 gap-3">{customElements.filter(el => el.type === 'image').map(el => (<div key={el.id} className={`relative group border rounded-lg p-2 transition-all cursor-pointer ${selectedElementId === el.id ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-200' : 'bg-white border-gray-200 hover:border-blue-200 hover:shadow-sm'}`} onClick={() => setSelectedElementId(el.id)}><div className="h-24 bg-gray-100 rounded border border-gray-100 mb-2 flex items-center justify-center overflow-hidden relative"><img src={el.src} className="max-w-full max-h-full object-contain" /><div className="absolute bottom-1 right-1 bg-black/60 text-white text-[9px] px-1 rounded">{(el.width || 0).toFixed(0)}px</div></div><button onClick={(e) => { e.stopPropagation(); deleteCustomElement(el.id); }} className="absolute -top-2 -right-2 bg-white border border-gray-200 rounded-full p-1.5 shadow-sm text-gray-400 hover:text-red-500 hover:border-red-200 transition-colors opacity-0 group-hover:opacity-100" title="Remove Image"><TrashIcon className="w-3 h-3"/></button><div className="text-[10px] text-gray-500 text-center truncate">Click to select & resize</div></div>))}{customElements.filter(el => el.type === 'image').length === 0 && (<div className="col-span-2 flex flex-col items-center justify-center py-10 border-2 border-dashed border-gray-200 rounded-lg text-gray-400"><div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center mb-2 text-gray-300"><ImageIcon /></div><span className="text-xs font-medium">No images added</span><span className="text-[10px] mt-1">Upload logos, icons, or graphics</span></div>)}</div>
+                            <div className="flex justify-between items-center mb-4"><span className="text-xs font-medium text-gray-600">Front Side - Images & Icons</span><label className="text-xs flex items-center gap-2 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded font-medium transition-colors cursor-pointer shadow-sm"><UploadIcon /> Upload Image<input type="file" className="hidden" accept="image/*" onChange={addCustomImage('front')} /></label></div>
+                            <div className="grid grid-cols-2 gap-3">{customElements.filter(el => (el.type === 'image' && (el.side === 'front' || !el.side))).map(el => (<div key={el.id} className={`relative group border rounded-lg p-2 transition-all cursor-pointer ${selectedElementId === el.id ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-200' : 'bg-white border-gray-200 hover:border-blue-200 hover:shadow-sm'}`} onClick={() => setSelectedElementId(el.id)}><div className="h-24 bg-gray-100 rounded border border-gray-100 mb-2 flex items-center justify-center overflow-hidden relative"><img src={el.src} className="max-w-full max-h-full object-contain" /><div className="absolute bottom-1 right-1 bg-black/60 text-white text-[9px] px-1 rounded">{(el.width || 0).toFixed(0)}px</div></div><button onClick={(e) => { e.stopPropagation(); deleteCustomElement(el.id); }} className="absolute -top-2 -right-2 bg-white border border-gray-200 rounded-full p-1.5 shadow-sm text-gray-400 hover:text-red-500 hover:border-red-200 transition-colors opacity-0 group-hover:opacity-100" title="Remove Image"><TrashIcon className="w-3 h-3"/></button><div className="text-[10px] text-gray-500 text-center truncate">Click to select & resize</div></div>))}{customElements.filter(el => (el.type === 'image' && (el.side === 'front' || !el.side))).length === 0 && (<div className="col-span-2 flex flex-col items-center justify-center py-10 border-2 border-dashed border-gray-200 rounded-lg text-gray-400"><div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center mb-2 text-gray-300"><ImageIcon /></div><span className="text-xs font-medium">No images added</span><span className="text-[10px] mt-1">Upload logos, icons, or graphics</span></div>)}</div>
                         </div>
                     )}
                     {activeTab === 'frontShapes' && (
                         <div>
-                            <div className="mb-4"><span className="text-xs font-medium text-gray-600 block mb-3">Add Shapes</span><div className="grid grid-cols-4 gap-2"><button onClick={() => addCustomShape('rectangle')} className="flex flex-col items-center gap-1 p-2 border border-gray-200 rounded hover:bg-blue-50 hover:border-blue-200 transition-colors"><SquareIcon className="text-gray-600"/><span className="text-[10px] text-gray-500">Box</span></button><button onClick={() => addCustomShape('circle')} className="flex flex-col items-center gap-1 p-2 border border-gray-200 rounded hover:bg-blue-50 hover:border-blue-200 transition-colors"><CircleIcon className="text-gray-600"/><span className="text-[10px] text-gray-500">Circle</span></button><button onClick={() => addCustomShape('star')} className="flex flex-col items-center gap-1 p-2 border border-gray-200 rounded hover:bg-blue-50 hover:border-blue-200 transition-colors"><StarIcon className="text-gray-600"/><span className="text-[10px] text-gray-500">Star</span></button><button onClick={() => addCustomShape('line')} className="flex flex-col items-center gap-1 p-2 border border-gray-200 rounded hover:bg-blue-50 hover:border-blue-200 transition-colors"><LineIcon className="text-gray-600"/><span className="text-[10px] text-gray-500">Line</span></button></div></div>
-                            <div className="space-y-2 mt-4 pt-4 border-t border-gray-100"><span className="text-xs font-medium text-gray-600 block mb-2">Added Shapes</span>{customElements.filter(el => el.type === 'shape').map(el => (<div key={el.id} className={`flex items-center justify-between p-2 border rounded cursor-pointer ${selectedElementId === el.id ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200 hover:bg-gray-50'}`} onClick={() => setSelectedElementId(el.id)}><div className="flex items-center gap-3"><div className="w-6 flex justify-center text-gray-500">{el.shapeType === 'rectangle' && <SquareIcon />}{el.shapeType === 'circle' && <CircleIcon />}{el.shapeType === 'star' && <StarIcon />}{el.shapeType === 'line' && <LineIcon />}</div><div className="text-xs text-gray-700 capitalize">{el.shapeType}</div></div><button onClick={(e) => { e.stopPropagation(); deleteCustomElement(el.id); }} className="text-gray-400 hover:text-red-500"><TrashIcon className="w-3 h-3"/></button></div>))}{customElements.filter(el => el.type === 'shape').length === 0 && (<div className="text-center py-4 text-[10px] text-gray-400 italic">No shapes added yet.</div>)}</div>
+                            <div className="mb-4"><span className="text-xs font-medium text-gray-600 block mb-3">Add Shapes</span><div className="grid grid-cols-4 gap-2"><button onClick={() => addCustomShape('rectangle', 'front')} className="flex flex-col items-center gap-1 p-2 border border-gray-200 rounded hover:bg-blue-50 hover:border-blue-200 transition-colors"><SquareIcon className="text-gray-600"/><span className="text-[10px] text-gray-500">Box</span></button><button onClick={() => addCustomShape('circle', 'front')} className="flex flex-col items-center gap-1 p-2 border border-gray-200 rounded hover:bg-blue-50 hover:border-blue-200 transition-colors"><CircleIcon className="text-gray-600"/><span className="text-[10px] text-gray-500">Circle</span></button><button onClick={() => addCustomShape('star', 'front')} className="flex flex-col items-center gap-1 p-2 border border-gray-200 rounded hover:bg-blue-50 hover:border-blue-200 transition-colors"><StarIcon className="text-gray-600"/><span className="text-[10px] text-gray-500">Star</span></button><button onClick={() => addCustomShape('line', 'front')} className="flex flex-col items-center gap-1 p-2 border border-gray-200 rounded hover:bg-blue-50 hover:border-blue-200 transition-colors"><LineIcon className="text-gray-600"/><span className="text-[10px] text-gray-500">Line</span></button></div></div>
+                            <div className="space-y-2 mt-4 pt-4 border-t border-gray-100"><span className="text-xs font-medium text-gray-600 block mb-2">Added Shapes</span>{customElements.filter(el => (el.type === 'shape' && (el.side === 'front' || !el.side))).map(el => (<div key={el.id} className={`flex items-center justify-between p-2 border rounded cursor-pointer ${selectedElementId === el.id ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200 hover:bg-gray-50'}`} onClick={() => setSelectedElementId(el.id)}><div className="flex items-center gap-3"><div className="w-6 flex justify-center text-gray-500">{el.shapeType === 'rectangle' && <SquareIcon />}{el.shapeType === 'circle' && <CircleIcon />}{el.shapeType === 'star' && <StarIcon />}{el.shapeType === 'line' && <LineIcon />}</div><div className="text-xs text-gray-700 capitalize">{el.shapeType}</div></div><button onClick={(e) => { e.stopPropagation(); deleteCustomElement(el.id); }} className="text-gray-400 hover:text-red-500"><TrashIcon className="w-3 h-3"/></button></div>))}{customElements.filter(el => (el.type === 'shape' && (el.side === 'front' || !el.side))).length === 0 && (<div className="text-center py-4 text-[10px] text-gray-400 italic">No shapes added yet.</div>)}</div>
                         </div>
                     )}
-                    {/* ... Back Images/Text placeholder */}
-                    {(activeTab === 'backImages' || activeTab === 'backText') && (<div className="h-40 flex flex-col items-center justify-center text-gray-400 text-xs italic border border-gray-100 rounded bg-gray-50/50"><span>Back side customization coming soon</span></div>)}
+                    {activeTab === 'backImages' && (
+                        <div>
+                            <div className="flex justify-between items-center mb-4"><span className="text-xs font-medium text-gray-600">Back Side - Images & Icons</span><label className="text-xs flex items-center gap-2 px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded font-medium transition-colors cursor-pointer shadow-sm"><UploadIcon /> Upload Image<input type="file" className="hidden" accept="image/*" onChange={addCustomImage('back')} /></label></div>
+                            <div className="grid grid-cols-2 gap-3">{customElements.filter(el => (el.type === 'image' && el.side === 'back')).map(el => (<div key={el.id} className={`relative group border rounded-lg p-2 transition-all cursor-pointer ${selectedElementId === el.id ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-200' : 'bg-white border-gray-200 hover:border-blue-200 hover:shadow-sm'}`} onClick={() => setSelectedElementId(el.id)}><div className="h-24 bg-gray-100 rounded border border-gray-100 mb-2 flex items-center justify-center overflow-hidden relative"><img src={el.src} className="max-w-full max-h-full object-contain" /><div className="absolute bottom-1 right-1 bg-black/60 text-white text-[9px] px-1 rounded">{(el.width || 0).toFixed(0)}px</div></div><button onClick={(e) => { e.stopPropagation(); deleteCustomElement(el.id); }} className="absolute -top-2 -right-2 bg-white border border-gray-200 rounded-full p-1.5 shadow-sm text-gray-400 hover:text-red-500 hover:border-red-200 transition-colors opacity-0 group-hover:opacity-100" title="Remove Image"><TrashIcon className="w-3 h-3"/></button><div className="text-[10px] text-gray-500 text-center truncate">Click to select & resize</div></div>))}{customElements.filter(el => (el.type === 'image' && el.side === 'back')).length === 0 && (<div className="col-span-2 flex flex-col items-center justify-center py-10 border-2 border-dashed border-gray-200 rounded-lg text-gray-400"><div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center mb-2 text-gray-300"><ImageIcon /></div><span className="text-xs font-medium">No back images added</span><span className="text-[10px] mt-1">Upload logos, icons, or graphics</span></div>)}</div>
+                        </div>
+                    )}
+                    {activeTab === 'backText' && (
+                        <div>
+                            <div className="flex justify-between items-center mb-4"><span className="text-xs font-medium text-gray-600">Back Side - Text Elements</span><button onClick={() => addCustomText('back')} className="text-xs flex items-center gap-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded text-gray-700 font-medium transition-colors"><PlusIcon /> Add Text</button></div>
+                            <div className="space-y-3">{customElements.filter(el => el.type === 'text' && el.side === 'back').map((item) => (<div key={item.id} className={`flex items-center gap-2 p-2 rounded border transition-colors cursor-pointer ${selectedElementId === item.id ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-100' : 'bg-gray-50 border-gray-100 hover:bg-gray-100'}`} onClick={() => setSelectedElementId(item.id)}><div className="w-6 flex items-center justify-center text-gray-400"><TextIcon /></div><div className="flex-1 overflow-hidden"><div className="text-xs font-medium truncate text-gray-700">{item.text || "Empty Text"}</div><div className="text-[10px] text-gray-400 truncate">{item.fontSize}px • {item.fontFamily?.split(',')[0].replace(/"/g, '')}</div></div><button onClick={(e) => { e.stopPropagation(); deleteCustomElement(item.id); }} className="w-6 h-6 flex items-center justify-center text-red-400 hover:text-red-600 hover:bg-red-50 rounded"><TrashIcon /></button></div>))}{customElements.filter(el => el.type === 'text' && el.side === 'back').length === 0 && (<div className="text-center py-8 border-2 border-dashed border-gray-100 rounded-lg"><p className="text-xs text-gray-400">No custom back text added yet.</p></div>)}</div>
+                        </div>
+                    )}
+                    {activeTab === 'backShapes' && (
+                        <div>
+                            <div className="mb-4"><span className="text-xs font-medium text-gray-600 block mb-3">Add Shapes (Back Side)</span><div className="grid grid-cols-4 gap-2"><button onClick={() => addCustomShape('rectangle', 'back')} className="flex flex-col items-center gap-1 p-2 border border-gray-200 rounded hover:bg-blue-50 hover:border-blue-200 transition-colors"><SquareIcon className="text-gray-600"/><span className="text-[10px] text-gray-500">Box</span></button><button onClick={() => addCustomShape('circle', 'back')} className="flex flex-col items-center gap-1 p-2 border border-gray-200 rounded hover:bg-blue-50 hover:border-blue-200 transition-colors"><CircleIcon className="text-gray-600"/><span className="text-[10px] text-gray-500">Circle</span></button><button onClick={() => addCustomShape('star', 'back')} className="flex flex-col items-center gap-1 p-2 border border-gray-200 rounded hover:bg-blue-50 hover:border-blue-200 transition-colors"><StarIcon className="text-gray-600"/><span className="text-[10px] text-gray-500">Star</span></button><button onClick={() => addCustomShape('line', 'back')} className="flex flex-col items-center gap-1 p-2 border border-gray-200 rounded hover:bg-blue-50 hover:border-blue-200 transition-colors"><LineIcon className="text-gray-600"/><span className="text-[10px] text-gray-500">Line</span></button></div></div>
+                            <div className="space-y-2 mt-4 pt-4 border-t border-gray-100"><span className="text-xs font-medium text-gray-600 block mb-2">Added Back Shapes</span>{customElements.filter(el => el.type === 'shape' && el.side === 'back').map(el => (<div key={el.id} className={`flex items-center justify-between p-2 border rounded cursor-pointer ${selectedElementId === el.id ? 'bg-blue-50 border-blue-200' : 'bg-white border-gray-200 hover:bg-gray-50'}`} onClick={() => setSelectedElementId(el.id)}><div className="flex items-center gap-3"><div className="w-6 flex justify-center text-gray-500">{el.shapeType === 'rectangle' && <SquareIcon />}{el.shapeType === 'circle' && <CircleIcon />}{el.shapeType === 'star' && <StarIcon />}{el.shapeType === 'line' && <LineIcon />}</div><div className="text-xs text-gray-700 capitalize">{el.shapeType}</div></div><button onClick={(e) => { e.stopPropagation(); deleteCustomElement(el.id); }} className="text-gray-400 hover:text-red-500"><TrashIcon className="w-3 h-3"/></button></div>))}{customElements.filter(el => el.type === 'shape' && el.side === 'back').length === 0 && (<div className="text-center py-4 text-[10px] text-gray-400 italic">No back shapes added yet.</div>)}</div>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
 
-        {/* Right Column - Preview */}
         <div className="col-span-12 lg:col-span-5">
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 sticky top-24">
                 <div className="flex justify-between items-center mb-4">
                     <h2 className="text-base font-bold text-gray-800">Card Preview</h2>
                     <div className="flex items-center gap-2">
-                        {/* View Toggles */}
                         <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-lg mr-2"><button onClick={() => setPreviewMode('front')} className={`p-1.5 rounded ${previewMode === 'front' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`} title="Front Only"><ViewFrontIcon /></button><button onClick={() => setPreviewMode('back')} className={`p-1.5 rounded ${previewMode === 'back' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`} title="Back Only"><ViewBackIcon /></button><button onClick={() => setPreviewMode('both')} className={`p-1.5 rounded ${previewMode === 'both' ? 'bg-white shadow text-blue-600' : 'text-gray-500 hover:text-gray-700'}`} title="Both Sides"><ViewBothIcon /></button></div>
                         <button className="p-1.5 hover:bg-gray-100 rounded text-gray-500" onClick={() => setZoom(z => Math.max(z - 10, 50))}><ZoomOutIcon /></button><span className="text-xs font-medium text-gray-600 w-10 text-center">{zoom}%</span><button className="p-1.5 hover:bg-gray-100 rounded text-gray-500" onClick={() => setZoom(z => Math.min(z + 10, 200))}><ZoomInIcon /></button><button className="bg-gray-100 text-gray-600 text-[10px] px-2 py-1.5 hover:bg-gray-200 rounded font-medium ml-1" onClick={() => setZoom(100)}>Actual Size</button><div className="w-px h-4 bg-gray-300 mx-1"></div><button onClick={() => {setIsLocked(!isLocked);setSelectedElementId(null);}} className={`flex items-center gap-1 text-xs px-3 py-1.5 rounded font-medium shadow-sm transition-colors ${isLocked ? 'bg-red-50 text-red-600 border border-red-200' : 'bg-[#1e88e5] text-white'}`}>{isLocked ? <><LockIcon /> Locked</> : <><UnlockIcon /> Drag Mode</>}</button><button onClick={handleResetPositions} className="text-gray-600 text-xs px-3 py-1.5 hover:bg-gray-100 rounded font-medium">Reset Positions</button>
                     </div>
@@ -1488,27 +1822,23 @@ const App = () => {
 
                 <div className="flex flex-col items-center gap-8 overflow-hidden bg-gray-50 p-8 rounded-xl inner-shadow border border-gray-100 relative" style={{ minHeight: '600px'}}>
                     
-                    {/* Front Side Rendering */}
                     {(previewMode === 'front' || previewMode === 'both') && (
                     <div className="flex flex-col items-center gap-2">
                         <span className="text-xs font-semibold text-gray-500">Front Side</span>
                         <div className="relative group shadow-2xl transition-transform duration-200 bg-white" style={{ width: '320px', height: '500px', transform: `scale(${zoom/100})`, transformOrigin: 'top center' }}>
-                            {/* ... (Background, Strips, Content Layer same) */}
                             <div className="absolute inset-0 bg-white rounded-xl overflow-hidden border border-gray-200 pointer-events-none">{images.frontBg && <img src={images.frontBg} className="w-full h-full object-cover" />}<div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/10 to-transparent pointer-events-none"></div></div>
                             <div className="absolute left-0 right-0 h-4 z-10 pointer-events-none" style={{ top: '53px', backgroundColor: activeDesignation?.color || '#2563eb' }}></div>
                             <div className="absolute left-0 right-0 bottom-0 h-5 z-10 pointer-events-none" style={{ backgroundColor: activeDesignation?.color || '#2563eb' }}></div>
 
                             <div className="absolute inset-0 flex flex-col items-center pt-5 text-center p-4 z-20">
-                                {/* ... (Logo, Photo, Text, Barcode same as before) */}
-                                <div className="flex flex-col items-center w-full mb-6 pointer-events-none relative z-20"><span className="text-[12px] font-bold text-gray-800 uppercase tracking-wide leading-none">Department of Posts</span><span className="text-[10px] font-bold text-gray-600 uppercase tracking-wide leading-tight">Sri Lanka</span></div>
+                                <div className="w-full h-12 mb-6 pointer-events-none"></div>
                                 <div className="overflow-hidden shadow-md mb-3 transition-all duration-200 pointer-events-none flex-shrink-0 relative z-20" style={{width: `${112 * profileConfig.scale}px`, height: `${128 * profileConfig.scale}px`, borderWidth: `${profileConfig.borderWidth}px`, borderColor: profileConfig.borderColor, borderStyle: 'solid', borderRadius: `${profileConfig.borderRadius}%`, marginTop: `${profileConfig.yOffset}px`}}><div className="w-full h-full bg-gray-200 bg-white">{images.profile && <img src={images.profile} className="w-full h-full object-cover" />}</div></div>
                                 <div className={`mb-0.5 rounded px-1 relative z-20 ${!isLocked ? 'cursor-pointer hover:ring-1 hover:ring-blue-300' : ''} ${selectedElementId === 'std_nameWithInitials' ? 'ring-1 ring-blue-500 bg-blue-50/20' : ''}`} onClick={(e) => { if (isLocked) return; e.stopPropagation(); setSelectedElementId('std_nameWithInitials'); }} style={getComputedTextStyle(standardStyles.nameWithInitials)}>{data.nameWithInitials || "Name"}</div>
                                 <div className={`mb-3 px-4 rounded relative z-20 ${!isLocked ? 'cursor-pointer hover:ring-1 hover:ring-blue-300' : ''} ${selectedElementId === 'std_fullName' ? 'ring-1 ring-blue-500 bg-blue-50/20' : ''}`} onClick={(e) => { if (isLocked) return; e.stopPropagation(); setSelectedElementId('std_fullName'); }} style={getComputedTextStyle(standardStyles.fullName)}>{data.fullName || "Full Name"}</div>
                                 <div className="mb-2 w-full flex flex-col items-center relative z-20"><div className={`rounded px-2 ${!isLocked ? 'cursor-pointer hover:ring-1 hover:ring-blue-300' : ''} ${selectedElementId === 'std_designation' ? 'ring-1 ring-blue-500 bg-blue-50/20' : ''}`} onClick={(e) => { if (isLocked) return; e.stopPropagation(); setSelectedElementId('std_designation'); }} style={getComputedTextStyle({ ...standardStyles.designation, color: standardStyles.designation.color !== '#1e3a8a' ? standardStyles.designation.color : (activeDesignation?.textColor || '#1e3a8a') })}>{data.designation || "Designation"}</div><div className={`rounded px-2 ${!isLocked ? 'cursor-pointer hover:ring-1 hover:ring-blue-300' : ''} ${selectedElementId === 'std_grade' ? 'ring-1 ring-blue-500 bg-blue-50/20' : ''}`} onClick={(e) => { if (isLocked) return; e.stopPropagation(); setSelectedElementId('std_grade'); }} style={getComputedTextStyle({ ...standardStyles.grade, color: standardStyles.grade.color !== '#1e3a8a' ? standardStyles.grade.color : (activeGrade?.textColor || '#1e3a8a') })}>{data.grade}</div></div>
                                 <div className="mt-auto mb-5 w-full px-4 flex flex-col items-center pointer-events-none relative z-20"><div className="w-full max-w-[90%] overflow-hidden flex justify-center"><BarcodeGenerator value={data.nic} config={barcodeConfig} /></div><div className="flex justify-between items-center mt-2 border-t border-gray-100 pt-1 w-full pointer-events-auto"><div className={`rounded px-1 ${!isLocked ? 'cursor-pointer hover:ring-1 hover:ring-blue-300' : ''} ${selectedElementId === 'std_footerLeft' ? 'ring-1 ring-blue-500 bg-blue-50/20' : ''}`} onClick={(e) => { if (isLocked) return; e.stopPropagation(); setSelectedElementId('std_footerLeft'); }} style={getComputedTextStyle(standardStyles.footerLeft)}>Date: {data.dateOfIssue}</div><div className={`rounded px-1 ${!isLocked ? 'cursor-pointer hover:ring-1 hover:ring-blue-300' : ''} ${selectedElementId === 'std_footerRight' ? 'ring-1 ring-blue-500 bg-blue-50/20' : ''}`} onClick={(e) => { if (isLocked) return; e.stopPropagation(); setSelectedElementId('std_footerRight'); }} style={getComputedTextStyle(standardStyles.footerRight)}>SL Post {data.slPostFileNo}</div></div></div>
                                 
-                                {/* Custom Elements Rendering with Handles */}
-                                {customElements.map(el => {
+                                {customElements.filter(el => (el.side === 'front' || !el.side)).map(el => {
                                     const textStyle = el.type === 'text' ? getComputedTextStyle(el) : {};
                                     const isEditing = editingElementId === el.id;
                                     const isSelected = selectedElementId === el.id && !isLocked;
@@ -1522,16 +1852,15 @@ const App = () => {
                                                 if (isLocked) return;
                                                 if (el.type === 'text') setEditingElementId(el.id);
                                             }}
-                                            className={`absolute group select-none pointer-events-auto ${isSelected ? 'z-[100]' : ''}`} // Removed hardcoded z-40
+                                            className={`absolute group select-none pointer-events-auto ${isSelected ? 'z-[100]' : ''}`}
                                             style={{ 
                                                 top: `${el.y}px`, 
                                                 left: `${el.x}px`, 
                                                 cursor: isLocked ? 'default' : 'move',
                                                 transform: `rotate(${el.rotation || 0}deg)`,
-                                                zIndex: isSelected ? 100 : (el.zIndex || 30) // Use dynamic zIndex
+                                                zIndex: isSelected ? 100 : (el.zIndex || 30)
                                             }}
                                         >
-                                            {/* Element Content */}
                                             <div className={`${isSelected ? 'ring-1 ring-blue-500 ring-dashed' : (!isLocked ? 'group-hover:ring-1 group-hover:ring-gray-300 group-hover:ring-dashed' : '')}`}>
                                             {el.type === 'text' ? (
                                                 <div 
@@ -1577,15 +1906,12 @@ const App = () => {
                                             )}
                                             </div>
 
-                                            {/* Resize Handles - Only visible when selected & not locked */}
                                             {isSelected && !isEditing && (
                                                 <>
-                                                    {/* Corners */}
                                                     <div onMouseDown={(e) => handleResizeMouseDown(e, el.id, 'nw')} className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border border-blue-600 rounded-full shadow cursor-nw-resize z-50 hover:bg-blue-50"></div>
                                                     <div onMouseDown={(e) => handleResizeMouseDown(e, el.id, 'ne')} className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border border-blue-600 rounded-full shadow cursor-ne-resize z-50 hover:bg-blue-50"></div>
                                                     <div onMouseDown={(e) => handleResizeMouseDown(e, el.id, 'sw')} className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border border-blue-600 rounded-full shadow cursor-sw-resize z-50 hover:bg-blue-50"></div>
                                                     <div onMouseDown={(e) => handleResizeMouseDown(e, el.id, 'se')} className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border border-blue-600 rounded-full shadow cursor-se-resize z-50 hover:bg-blue-50"></div>
-                                                    {/* Sides (Optional, skipping for clarity unless requested, but sticking to corners covers most) */}
                                                 </>
                                             )}
                                         </div>
@@ -1596,45 +1922,116 @@ const App = () => {
                     </div>
                     )}
 
-                    {/* Back Side Rendering (Same as before) */}
                     {(previewMode === 'back' || previewMode === 'both') && (
-                    <div className="flex flex-col items-center gap-2">
-                         <span className="text-xs font-semibold text-gray-500">Back Side</span>
-                        <div className="relative group shadow-2xl transition-transform duration-200 bg-white" style={{ width: '320px', height: '500px', transform: `scale(${zoom/100})`, transformOrigin: 'top center' }}>
-                            <div className="absolute inset-0 bg-white rounded-xl overflow-hidden border border-gray-200">{images.backBg && <img src={images.backBg} className="w-full h-full object-cover" />}</div>
-                            <div className="absolute inset-0 p-6 flex flex-col items-center justify-center text-center">
-                                <div className="w-full mb-8 px-4 opacity-90"><BarcodeGenerator value={data.nic} config={{ ...barcodeConfig, displayValue: false }} /></div>
-                                <div className="border-b border-dashed border-gray-400 w-3/4 mb-2 pb-2 min-h-[40px] flex items-end justify-center">{images.signature && <img src={images.signature} className="h-12 mx-auto opacity-80" />}</div>
-                                <p className="text-[10px] font-bold text-gray-800 mb-12 uppercase tracking-wide">Signature of Card Holder</p>
-                                <div className="mt-auto space-y-3 w-full"><div className="w-full flex justify-center"><div className="w-32 h-12 relative"><svg viewBox="0 0 200 100" className="absolute inset-0 w-full h-full text-blue-900 opacity-70"><path d="M20,50 Q50,20 80,50 T150,50" fill="none" stroke="currentColor" strokeWidth="2" /></svg></div></div><p className="text-[11px] font-bold text-gray-900">Postmaster General</p><div className="text-[9px] text-gray-500 leading-relaxed mt-6 border-t border-gray-100 pt-2 w-full">If found, Please return to:<br/><span className="font-semibold text-gray-700">Postmaster General</span><br/>Colombo - 01000</div></div>
+                        <div className="flex flex-col items-center gap-2">
+                            <span className="text-xs font-semibold text-gray-500">Back Side</span>
+                            <div className="relative group shadow-2xl transition-transform duration-200 bg-white" style={{ width: '320px', height: '500px', transform: `scale(${zoom/100})`, transformOrigin: 'top center' }}>
+                                <div className="absolute inset-0 bg-white rounded-xl overflow-hidden border border-gray-200">{images.backBg && <img src={images.backBg} className="w-full h-full object-cover" />}</div>
+                                <div className="absolute inset-0 p-6 flex flex-col items-center text-center">
+                                    <div className="w-full mt-8 mb-4 px-4 opacity-90 flex justify-center"><BarcodeGenerator value={data.nic} config={{ ...barcodeConfig, displayValue: false }} /></div>
+                                    
+                                    {customElements.filter(el => el.side === 'back').map(el => {
+                                        const textStyle = el.type === 'text' ? getComputedTextStyle(el) : {};
+                                        const isEditing = editingElementId === el.id;
+                                        const isSelected = selectedElementId === el.id && !isLocked;
+
+                                        return (
+                                            <div 
+                                                key={el.id} 
+                                                onMouseDown={(e) => handleElementMouseDown(e, el.id)}
+                                                onDoubleClick={(e) => {
+                                                    e.stopPropagation();
+                                                    if (isLocked) return;
+                                                    if (el.type === 'text') setEditingElementId(el.id);
+                                                }}
+                                                className={`absolute group select-none pointer-events-auto ${isSelected ? 'z-[100]' : ''}`}
+                                                style={{ 
+                                                    top: `${el.y}px`, 
+                                                    left: `${el.x}px`, 
+                                                    cursor: isLocked ? 'default' : 'move',
+                                                    transform: `rotate(${el.rotation || 0}deg)`,
+                                                    zIndex: isSelected ? 100 : (el.zIndex || 30)
+                                                }}
+                                            >
+                                                <div className={`${isSelected ? 'ring-1 ring-blue-500 ring-dashed' : (!isLocked ? 'group-hover:ring-1 group-hover:ring-gray-300 group-hover:ring-dashed' : '')}`}>
+                                                {el.type === 'text' ? (
+                                                    <div 
+                                                        id={`editable-text-${el.id}`}
+                                                        contentEditable={isEditing}
+                                                        suppressContentEditableWarning={true}
+                                                        onBlur={(e) => {
+                                                            updateCustomElement(el.id, { text: e.currentTarget.innerText });
+                                                            setEditingElementId(null);
+                                                        }}
+                                                        onMouseDown={(e) => { if (isEditing) e.stopPropagation(); }}
+                                                        style={{
+                                                            ...textStyle,
+                                                            cursor: isEditing ? 'text' : (isLocked ? 'default' : 'move'),
+                                                            outline: isEditing ? 'none' : undefined,
+                                                            minWidth: isEditing ? '20px' : undefined
+                                                        }}
+                                                    >
+                                                        {el.text}
+                                                    </div>
+                                                ) : el.type === 'shape' ? (
+                                                    <div style={{
+                                                        width: `${el.width}px`,
+                                                        height: `${el.height}px`,
+                                                        opacity: (el.opacity ?? 100) / 100,
+                                                        transform: `scaleX(${el.flipX ? -1 : 1}) scaleY(${el.flipY ? -1 : 1})`,
+                                                        position: 'relative'
+                                                    }}>
+                                                        {el.shapeType === 'rectangle' && (<div style={{width: '100%', height: '100%', backgroundColor: el.fillColor, border: `${el.strokeWidth}px solid ${el.strokeColor}`}} />)}
+                                                        {el.shapeType === 'circle' && (<div style={{width: '100%', height: '100%', backgroundColor: el.fillColor, border: `${el.strokeWidth}px solid ${el.strokeColor}`, borderRadius: '50%'}} />)}
+                                                        {el.shapeType === 'star' && (<svg viewBox="0 0 24 24" style={{width: '100%', height: '100%', overflow: 'visible'}} preserveAspectRatio="none"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" fill={el.fillColor} stroke={el.strokeColor} strokeWidth={el.strokeWidth ? el.strokeWidth / 2 : 0} vectorEffect="non-scaling-stroke" /></svg>)}
+                                                        {el.shapeType === 'line' && (<div style={{width: '100%', height: `${Math.max(1, el.strokeWidth || 1)}px`, backgroundColor: el.strokeColor, position: 'absolute', top: '50%', transform: 'translateY(-50%)'}} />)}
+                                                    </div>
+                                                ) : (
+                                                    <div style={{
+                                                        width: `${el.width}px`,
+                                                        height: 'auto',
+                                                        opacity: (el.opacity ?? 100) / 100,
+                                                        transform: `scaleX(${el.flipX ? -1 : 1}) scaleY(${el.flipY ? -1 : 1})`
+                                                    }} className="relative">
+                                                        <img src={el.src} className="w-full h-auto pointer-events-none" />
+                                                    </div>
+                                                )}
+                                                </div>
+
+                                                {isSelected && !isEditing && (
+                                                    <>
+                                                        <div onMouseDown={(e) => handleResizeMouseDown(e, el.id, 'nw')} className="absolute -top-1.5 -left-1.5 w-3 h-3 bg-white border border-blue-600 rounded-full shadow cursor-nw-resize z-50 hover:bg-blue-50"></div>
+                                                        <div onMouseDown={(e) => handleResizeMouseDown(e, el.id, 'ne')} className="absolute -top-1.5 -right-1.5 w-3 h-3 bg-white border border-blue-600 rounded-full shadow cursor-ne-resize z-50 hover:bg-blue-50"></div>
+                                                        <div onMouseDown={(e) => handleResizeMouseDown(e, el.id, 'sw')} className="absolute -bottom-1.5 -left-1.5 w-3 h-3 bg-white border border-blue-600 rounded-full shadow cursor-sw-resize z-50 hover:bg-blue-50"></div>
+                                                        <div onMouseDown={(e) => handleResizeMouseDown(e, el.id, 'se')} className="absolute -bottom-1.5 -right-1.5 w-3 h-3 bg-white border border-blue-600 rounded-full shadow cursor-se-resize z-50 hover:bg-blue-50"></div>
+                                                    </>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                             </div>
                         </div>
-                    </div>
                     )}
                 </div>
-                
-                <div className="mt-6 flex justify-center"><button className="flex items-center gap-2 bg-[#1e88e5] text-white px-6 py-2 rounded font-medium shadow-md hover:bg-blue-600 transition-colors"><FilePdfIcon /> Save as PDF</button></div>
             </div>
+            
+            {(selectedElementId && !isLocked) && (
+                <div 
+                    ref={inspectorRef}
+                    className="fixed z-[100] bg-white rounded-lg shadow-xl border border-gray-200 w-[280px] p-4"
+                    style={{ 
+                        top: inspectorPosition ? inspectorPosition.y : 150, 
+                        left: inspectorPosition ? inspectorPosition.x : window.innerWidth - 320,
+                        cursor: isDraggingInspector ? 'grabbing' : 'default'
+                    }}
+                >
+                    {renderInspector()}
+                </div>
+            )}
         </div>
-      </div>
 
-      {/* Generated Cards Table ... */}
-      <div className="bg-white border-t border-gray-200 p-6">
-          <h2 className="text-lg font-bold text-gray-800 mb-4">Generated Cards ({generatedCards.length})</h2>
-          <div className="overflow-x-auto rounded-lg border border-gray-200"><table className="w-full text-sm text-left"><thead className="bg-gray-50 text-gray-500 font-medium"><tr><th className="px-6 py-3">Name</th><th className="px-6 py-3">Designation</th><th className="px-6 py-3">Grade</th><th className="px-6 py-3">NIC</th><th className="px-6 py-3">Date of Issue</th><th className="px-6 py-3">File No</th><th className="px-6 py-3 text-right">Actions</th></tr></thead><tbody className="divide-y divide-gray-100">{generatedCards.map((card) => (<tr key={card.id} className="hover:bg-gray-50/50"><td className="px-6 py-4 font-medium text-gray-900">{card.nameWithInitials}</td><td className="px-6 py-4 text-gray-600">{card.designation}</td><td className="px-6 py-4 text-gray-600">{card.grade}</td><td className="px-6 py-4 text-gray-600 font-mono text-xs">{card.nic}</td><td className="px-6 py-4 text-gray-600">{card.dateOfIssue}</td><td className="px-6 py-4 text-gray-600">{card.slPostFileNo}</td><td className="px-6 py-4 text-right"><div className="flex items-center justify-end gap-3"><button className="text-gray-400 hover:text-blue-600"><EyeIcon /></button><button className="text-gray-400 hover:text-green-600"><PrinterIcon /></button><button onClick={() => handleDeleteCard(card.id!)} className="text-gray-400 hover:text-red-500"><TrashIcon /></button></div></td></tr>))}{generatedCards.length === 0 && (<tr><td colSpan={7} className="px-6 py-8 text-center text-gray-400 italic">No generated cards yet. Use the form above to create one.</td></tr>)}</tbody></table></div>
       </div>
-      
-      {/* Floating Side Toolbar for Editing */}
-      {selectedStyle && (
-          <div 
-              ref={inspectorRef}
-              className={`fixed w-64 bg-white/95 backdrop-blur rounded-xl shadow-2xl border border-gray-200 p-4 z-[1000] animate-in fade-in zoom-in-95 duration-200 max-h-[calc(100%-2rem)] overflow-y-auto ${inspectorPosition ? '' : 'right-4 top-24'}`}
-              style={inspectorPosition ? { top: inspectorPosition.y, left: inspectorPosition.x } : {}}
-          >
-              {renderInspector()}
-          </div>
-      )}
-
     </div>
   );
 };
